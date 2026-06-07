@@ -103,6 +103,8 @@
   .ub-review{color:var(--muted); font-size:13px; margin-top:6px; line-height:1.5;}
   .ub-date{color:var(--faint); font-size:11px; margin-top:5px;}
   .ub-empty{color:var(--faint); font-size:13px;}
+  .ublock.empty.loghere{opacity:1; cursor:pointer;}
+  .ub-loglink{color:var(--a); font-size:13px; font-weight:700;}
   .more{font-size:11px; color:var(--faint); background:var(--panel2); padding:2px 7px; border-radius:6px;}
 
   .chips{display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:6px;}
@@ -492,9 +494,12 @@ function viewDiary(){
   const cards=buildGroups(logs).map(g=>groupCard(g,cols)).join("");
   return `<div class="chips">${chips}</div>${cards||'<div class="empty">Nothing here yet.</div>'}`;
 }
-function userBlock(uid,logs){
-  const u=userById(uid); const cls=uid==="a"?"ua":"ub";
-  if(!logs.length) return `<div class="ublock empty">${avatarHTML(u)}<span class="ub-empty">${esc(u.name)} hasn't logged this</span></div>`;
+function userBlock(uid,logs,gkey){
+  const u=userById(uid); const cls=uid==="a"?"ua":"ub"; const isCur=uid===DB.currentUserId;
+  if(!logs.length){
+    if(isCur) return `<div class="ublock empty loghere" data-loghere="${esc(gkey)}">${avatarHTML(u)}<span class="ub-loglink">＋ Log this as ${esc(u.name)}</span></div>`;
+    return `<div class="ublock empty">${avatarHTML(u)}<span class="ub-empty">${esc(u.name)} hasn't logged this</span></div>`;
+  }
   const l=logs[0]; const sub=tvSubtitle(l); const more=logs.length>1?`<span class="more">+${logs.length-1} more</span>`:"";
   return `<div class="ublock">
     <div class="ub-head">${avatarHTML(u)}<span class="ub-name">${esc(u.name)}</span>${starsHTML(l.rating)}${more}</div>
@@ -510,7 +515,7 @@ function userBlock(uid,logs){
 }
 function groupCard(g,cols){
   const f=g.sample;
-  const blocks=cols.map(uid=>userBlock(uid, uid==="a"?g.a:g.b)).join("");
+  const blocks=cols.map(uid=>userBlock(uid, uid==="a"?g.a:g.b, g.key)).join("");
   return `<div class="gcard" data-group="${esc(g.key)}">
     <div class="ghead">${posterHTML(f,"","thumb")}
       <div style="min-width:0"><div class="title">${esc(f.title)}<span class="yr">${f.year||""}</span></div>
@@ -526,17 +531,18 @@ function openGroupDetail(key){
   if(!logs.length){closeModal();return;}
   const f=logs.find(l=>l.poster)||logs[0];
   function section(uid){
-    const u=userById(uid); const cls=uid==="a"?"ua":"ub";
+    const u=userById(uid); const cls=uid==="a"?"ua":"ub"; const isCur=uid===DB.currentUserId;
     const mine=logs.filter(l=>l.userId===uid).sort((a,b)=>b.createdAt-a.createdAt);
     const head=`<h2 class="section"><span class="avatar ${cls}" style="display:inline-flex;vertical-align:middle;margin-right:7px">${initials(u.name)}</span>${esc(u.name)}</h2>`;
-    if(!mine.length) return head+`<div class="ub-empty" style="margin-bottom:10px">Hasn't logged this yet.</div>`;
+    const addBtn=isCur?`<button class="${mine.length?"btn-ghost":"btn-primary"}" data-loghere style="margin-top:8px">＋ Log this as ${esc(u.name)}</button>`:"";
+    if(!mine.length) return head+`<div class="ub-empty" style="margin-bottom:8px">Hasn't logged this yet.</div>`+addBtn;
     const rows=mine.map(l=>{const sub=tvSubtitle(l);
       return `<div class="actrow" data-entry="${l.id}"><div style="flex:1;min-width:0">
         <div class="t">${starsHTML(l.rating)}${sub?` <span style="color:var(--blue);font-size:12px;font-weight:600">${sub}</span>`:""}</div>
         <div class="s">${l.together?"Together":"Solo"}${l.rewatch?" · Rewatch":""}${l.fav?" · ♥":""} · ${fmtDate(l.watchedDate)}</div>
         ${l.review?`<div class="s" style="margin-top:4px">"${esc(l.review)}"</div>`:""}
       </div><span style="color:var(--faint);font-size:18px">›</span></div>`;}).join("");
-    return head+rows;
+    return head+rows+addBtn;
   }
   document.getElementById("modalRoot").innerHTML=`<div class="modal-bg" id="mbg"><div class="modal">
     <div class="grab"></div>
@@ -549,6 +555,13 @@ function openGroupDetail(key){
   document.getElementById("mbg").onclick=e=>{if(e.target.id==="mbg")closeModal();};
   document.getElementById("closeG").onclick=closeModal;
   document.querySelectorAll("#modalRoot [data-entry]").forEach(e=>e.onclick=()=>openEntryDetail(e.dataset.entry));
+  document.querySelectorAll("#modalRoot [data-loghere]").forEach(b=>b.onclick=()=>logFromGroup(key));
+}
+async function logFromGroup(key){
+  const logs=DB.logs.filter(l=>groupKey(l)===key);
+  const f=logs.find(x=>x.poster)||logs[0]; if(!f)return;
+  const film=await hydrateTV({mediaType:f.mediaType,title:f.title,year:f.year,color:f.color,genre:f.genre,poster:f.poster,tmdbId:f.tmdbId});
+  closeModal(); openLogForm(film);
 }
 
 /* ---------- WATCHLIST ---------- */
@@ -962,6 +975,7 @@ function openEditProfile(){
 function bindView(){
   document.querySelectorAll("[data-entry]").forEach(e=>e.onclick=()=>openEntryDetail(e.dataset.entry));
   document.querySelectorAll("[data-group]").forEach(e=>e.onclick=()=>openGroupDetail(e.dataset.group));
+  document.querySelectorAll("[data-loghere]").forEach(e=>e.onclick=ev=>{ev.stopPropagation();logFromGroup(e.dataset.loghere);});
   if(TAB==="diary")document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{diaryFilter=c.dataset.f;render();});
   if(TAB==="watchlist"){
     const add=document.getElementById("wlAdd");if(add)add.onclick=openWatchlistAdd;
